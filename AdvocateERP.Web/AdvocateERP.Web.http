@@ -1,0 +1,6 @@
+@AdvocateERP.Web_HostAddress = http://localhost:5103
+
+GET {{AdvocateERP.Web_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

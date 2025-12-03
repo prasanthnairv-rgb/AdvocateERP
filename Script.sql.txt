@@ -1,0 +1,69 @@
+-- 1. Create the Database
+IF NOT EXISTS (SELECT name FROM master.dbo.sysdatabases WHERE name = N'AdvocateERPSaaS')
+BEGIN
+    CREATE DATABASE [AdvocateERPSaaS];
+END
+GO
+
+USE [AdvocateERPSaaS];
+GO
+
+-- 2. Create the Clients table (Includes Multi-Tenancy and Auditing)
+CREATE TABLE [dbo].[Clients] (
+    [Id] uniqueidentifier NOT NULL,
+    [TenantId] uniqueidentifier NOT NULL, 
+    [FirstName] nvarchar(max) NOT NULL,
+    [LastName] nvarchar(max) NOT NULL,
+    [ContactNumber] nvarchar(max) NOT NULL,
+    [Email] nvarchar(max) NOT NULL,
+    [AddressLine1] nvarchar(max) NOT NULL,
+    [City] nvarchar(max) NOT NULL,
+    [PostalCode] nvarchar(max) NOT NULL,
+    [CreatedAt] datetime2 NOT NULL, 
+    [CreatedBy] nvarchar(max) NULL,
+    [LastModifiedAt] datetime2 NULL,
+    [LastModifiedBy] nvarchar(max) NULL,
+    CONSTRAINT [PK_Clients] PRIMARY KEY ([Id])
+);
+GO
+CREATE INDEX [IX_Clients_TenantId] ON [dbo].[Clients] ([TenantId]);
+GO
+
+-- 3. Create the Cases table (Includes Foreign Key to Clients)
+CREATE TABLE [dbo].[Cases] (
+    [Id] uniqueidentifier NOT NULL,
+    [TenantId] uniqueidentifier NOT NULL, 
+    [CaseTitle] nvarchar(max) NOT NULL,
+    [CaseNumber] nvarchar(max) NOT NULL,
+    [CourtName] nvarchar(max) NOT NULL,
+    [Status] int NOT NULL, 
+    [Description] nvarchar(max) NOT NULL,
+    [FilingDate] datetime2 NOT NULL,
+    [ClosureDate] datetime2 NULL,
+    [ClientId] uniqueidentifier NOT NULL, 
+    [CreatedAt] datetime2 NOT NULL,
+    [CreatedBy] nvarchar(max) NULL,
+    [LastModifiedAt] datetime2 NULL,
+    [LastModifiedBy] nvarchar(max) NULL,
+    CONSTRAINT [PK_Cases] PRIMARY KEY ([Id]),
+    CONSTRAINT [FK_Cases_Clients_ClientId] FOREIGN KEY ([ClientId]) REFERENCES [dbo].[Clients] ([Id]) ON DELETE CASCADE
+);
+GO
+CREATE INDEX [IX_Cases_TenantId] ON [dbo].[Cases] ([TenantId]);
+GO
+CREATE INDEX [IX_Cases_ClientId] ON [dbo].[Cases] ([ClientId]);
+GO
+
+-- 4. Create EF Core Migrations History Table (CRITICAL FOR UNBLOCKING)
+CREATE TABLE [dbo].[__EFMigrationsHistory] (
+    [MigrationId] nvarchar(150) NOT NULL,
+    [ProductVersion] nvarchar(32) NOT NULL,
+    CONSTRAINT [PK___EFMigrationsHistory] PRIMARY KEY ([MigrationId])
+);
+GO
+
+-- Insert the initial migration entry to tell EF Core the tables already exist.
+INSERT INTO [dbo].[__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+VALUES (N'InitialAdvocateSchema', N'8.0.0'); 
+GO
+
