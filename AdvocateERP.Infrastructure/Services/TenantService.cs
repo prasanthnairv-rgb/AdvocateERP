@@ -1,18 +1,31 @@
 ﻿using AdvocateERP.Application.Interfaces.Services;
-using System;
+using Microsoft.AspNetCore.Http;
 
-// In AdvocateERP.Infrastructure/Services
-namespace AdvocateERP.Infrastructure.Services
+namespace AdvocateERP.Infrastructure.Services;
+public class TenantService : ITenantService
 {
-    // Registered as a Scoped service in Program.cs
-    public class TenantService : ITenantService
-    {
-        // Use a nullable Guid to represent the TenantId
-        public Guid? TenantId { get; private set; }
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    private Guid? _tenantId;
 
-        public void SetTenantId(Guid tenantId)
+    public TenantService(IHttpContextAccessor httpContextAccessor)
+    {
+        _httpContextAccessor = httpContextAccessor;
+
+        // Try to resolve TenantId from the JWT claim upon service creation
+        var tenantIdClaim = _httpContextAccessor.HttpContext?.User.Claims
+            .FirstOrDefault(c => c.Type == "TenantId")?.Value;
+
+        if (Guid.TryParse(tenantIdClaim, out Guid resolvedId))
         {
-            TenantId = tenantId;
+            _tenantId = resolvedId;
         }
+    }
+
+    public Guid? TenantId => _tenantId;
+
+    public void SetTenantId(Guid tenantId)
+    {
+        // This method is generally only used internally or during registration
+        _tenantId = tenantId;
     }
 }

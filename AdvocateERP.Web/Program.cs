@@ -5,81 +5,145 @@ using AdvocateERP.Infrastructure.Persistence;
 using AdvocateERP.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using AdvocateERP.Web.Extensions;
-// Add the using directive for MediatR configuration
 using MediatR;
-using AdvocateERP.Application; // Use a type from the Application assembly
+using AdvocateERP.Application;
+using Microsoft.AspNetCore.Identity;
+using AdvocateERP.Core.Entities;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddDataProtection();
 
-// FORCE ENVIRONMENT TO DEVELOPMENT TO BYPASS EXTERNAL OVERRIDE
+// FORCE ENVIRONMENT TO DEVELOPMENT
 builder.Environment.EnvironmentName = Environments.Development;
 
-// Add services to the container.
+// --- 1. CORS Policy Registration (Must be before builder.Build) ---
+const string MyAllowSpecificOrigins = "_myAllowSpecificOrigins";
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(name: MyAllowSpecificOrigins,
+        policy =>
+        {
+            policy.WithOrigins("http://localhost:5173", "http://localhost:3000")
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        });
+});
 
-// --- Register MediatR and Application Layer ---
-// This scans the assembly where IRequestHandler is defined (AdvocateERP.Application) 
-// to register all command and query handlers.
-builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(IApplicationDbContext).Assembly));
+// --- 2. Identity Services ---
+builder.Services.AddIdentityCore<ApplicationUser>(opt => {
+    opt.Password.RequireNonAlphanumeric = false; // Easier for testing
+})
+.AddEntityFrameworkStores<ApplicationDbContext>()
+.AddDefaultTokenProviders()
+.AddSignInManager<SignInManager<ApplicationUser>>();
 
-// --- 1. Register Infrastructure Services (Tenant Service) ---
-// Register ITenantService as SCOPED so a new instance exists for every HTTP request, 
-// allowing the TenantId to be unique per client request.
-builder.Services.AddScoped<ITenantService, TenantService>();
-
-builder.Services.AddScoped<IApplicationDbContext>(provider => provider.GetService<ApplicationDbContext>()!);
-// --- 2. Register ApplicationDbContext (SQL Server) ---
-// We use the DefaultConnection string defined in appsettings.json
+// --- 3. Database & MediatR ---
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(connectionString,
-        // Specify the assembly where migrations are stored (Infrastructure)
         b => b.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName)));
 
+builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(IApplicationDbContext).Assembly));
 
-// --- Other Web Services ---
+builder.Services.AddScoped<ITenantService, TenantService>();
+builder.Services.AddScoped<IApplicationDbContext>(provider => provider.GetService<ApplicationDbContext>()!);
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// ... after app.Build()
+// --- 4. SEED DATA LOGIC (Synchronous Force) ---
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var context = services.GetRequiredService<ApplicationDbContext>();
+    var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
 
-// Configure the HTTP request pipeline.
+    try
+    {
+
+        Console.WriteLine("--> [DEBUG] Applying pending migrations...");
+        // THIS LINE PHYSICALLY CREATES THE TABLES IF THEY ARE MISSING
+        context.Database.Migrate();
+
+        Console.WriteLine("--> [DEBUG] Checking Tenants...");
+        var tenantId = Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF");
+
+        if (!context.Tenants.Any())
+        {
+            context.Tenants.Add(new Tenant { Id = tenantId, Name = "Admin Law Firm" });
+            context.SaveChanges();
+            Console.WriteLine("--> [DEBUG] Tenant Created.");
+        }
+
+        Console.WriteLine("--> [DEBUG] Checking Users...");
+        // Use .Result to force the async call to finish immediately
+        var existingUser = userManager.FindByEmailAsync("admin@test.com").Result;
+
+        if (existingUser == null)
+        {
+            var adminUser = new ApplicationUser
+            {
+                UserName = "admin@test.com",
+                Email = "admin@test.com",
+                FullName = "System Admin",
+                TenantId = tenantId,
+                EmailConfirmed = true
+            };
+
+            var result = userManager.CreateAsync(adminUser, "Pa$$w0rd123!").Result;
+
+            if (result.Succeeded)
+            {
+                Console.WriteLine("--> [DEBUG] SUCCESS: admin@test.com created.");
+            }
+            else
+            {
+                Console.WriteLine("--> [DEBUG] FAILED: " + string.Join(", ", result.Errors.Select(e => e.Description)));
+            }
+        }
+        else
+        {
+            Console.WriteLine("--> [DEBUG] User already exists.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("--> [DEBUG] CRITICAL ERROR: " + ex.Message);
+        if (ex.InnerException != null)
+            Console.WriteLine("--> [DEBUG] INNER: " + ex.InnerException.Message);
+    }
+}
+
+// --- 5. Middleware Pipeline ---
 if (app.Environment.IsDevelopment())
 {
-    // Ensure Swagger is enabled FIRST in the pipeline
     app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        // Explicitly defines the Swagger JSON endpoint.
+    app.UseSwaggerUI(c => {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "AdvocateERP API V1");
-
-        // This makes Swagger UI the default page when you navigate to the base URL
         c.RoutePrefix = string.Empty;
     });
 }
 
 app.UseHttpsRedirection();
-
-// UseRouting is implicitly called by MapControllers but explicitly calling it here can help resolve routing issues.
 app.UseRouting();
+app.UseCors(MyAllowSpecificOrigins); // Must be after UseRouting
 
-// --- 3. Register Tenant Identification Middleware ---
-// This should run AFTER routing and authentication, but before controllers execute.
+// Custom Tenant Middleware
 app.Use(async (context, next) =>
 {
-    // ... your dummy tenant ID setup ...
     var tenantService = context.RequestServices.GetRequiredService<ITenantService>();
-    tenantService.SetTenantId(new Guid("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"));
+    tenantService.SetTenantId(Guid.Parse("FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"));
     await next(context);
 });
 
-app.UseAuthorization(); // Authorization runs after routing and custom logic
+app.UseAuthentication(); // ADDED THIS
+app.UseAuthorization();
 
-// MapControllers runs the endpoints.
 app.MapControllers();
-
 app.Run();

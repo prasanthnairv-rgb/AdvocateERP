@@ -1,0 +1,45 @@
+import React, { useState } from 'react';
+import apiClient from '../api/apiClient';
+
+const Login = ({ onLoginSuccess }: { onLoginSuccess: () => void }) => {
+    const [credentials, setCredentials] = useState({ username: '', password: '' });
+    const [error, setError] = useState('');
+
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        try {
+            // This calls your .NET AccountController
+            const response = await apiClient.post('/Account/login', credentials);
+            
+            // Store the JWT and TenantId in the browser's local storage
+            localStorage.setItem('token', response.data.token);
+            localStorage.setItem('tenantId', response.data.tenantId);
+            
+            onLoginSuccess();
+        } catch (err: any) {
+            setError(err.response?.data || 'Login failed. Check backend/CORS.');
+        }
+    };
+
+    return (
+        <div style={{ padding: '20px', maxWidth: '400px' }}>
+            <h2>AdvocateERP Login</h2>
+            <form onSubmit={handleLogin}>
+                <input 
+                    type="text" placeholder="Username" 
+                    onChange={e => setCredentials({...credentials, username: e.target.value})}
+                    style={{ display: 'block', marginBottom: '10px', width: '100%' }}
+                />
+                <input 
+                    type="password" placeholder="Password" 
+                    onChange={e => setCredentials({...credentials, password: e.target.value})}
+                    style={{ display: 'block', marginBottom: '10px', width: '100%' }}
+                />
+                <button type="submit">Log In</button>
+            </form>
+            {error && <p style={{ color: 'red' }}>{error}</p>}
+        </div>
+    );
+};
+
+export default Login;

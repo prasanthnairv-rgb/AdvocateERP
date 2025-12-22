@@ -8,6 +8,16 @@ obj/
 *.suo
 *.user
 
+# SQL Server
+*.mdf
+*.ldf
+
+# Node/React
+node_modules/
+dist/
+build/
+.env.local
+
 # NuGet packages
 packages/
 
